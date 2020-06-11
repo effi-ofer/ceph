@@ -547,6 +547,11 @@ void CreateRequest<I>::handle_object_map_resize(int r) {
 
 template<typename I>
 void CreateRequest<I>::fetch_mirror_mode() {
+  if (m_features & RBD_FEATURE_CRYPTO) {
+    printf("Effi: Crypto is enabled\n");
+    // crypto_enable();
+  }
+
   if ((m_features & RBD_FEATURE_JOURNALING) == 0) {
     mirror_image_enable();
     return;

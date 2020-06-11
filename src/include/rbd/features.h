@@ -12,6 +12,7 @@
 #define RBD_FEATURE_OPERATIONS          (1ULL<<8)
 #define RBD_FEATURE_MIGRATING           (1ULL<<9)
 #define RBD_FEATURE_NON_PRIMARY         (1ULL<<10)
+#define RBD_FEATURE_CRYPTO              (1ULL<<11)
 
 #define RBD_FEATURES_DEFAULT             (RBD_FEATURE_LAYERING | \
                                          RBD_FEATURE_EXCLUSIVE_LOCK | \
@@ -30,6 +31,7 @@
 #define RBD_FEATURE_NAME_OPERATIONS      "operations"
 #define RBD_FEATURE_NAME_MIGRATING       "migrating"
 #define RBD_FEATURE_NAME_NON_PRIMARY     "non-primary"
+#define RBD_FEATURE_NAME_CRYPTO          "cryptography"
 
 /// features that make an image inaccessible for read or write by
 /// clients that don't understand them
@@ -58,7 +60,8 @@
                                          RBD_FEATURE_DATA_POOL      | \
                                          RBD_FEATURE_OPERATIONS     | \
                                          RBD_FEATURE_MIGRATING      | \
-                                         RBD_FEATURE_NON_PRIMARY)
+                                         RBD_FEATURE_NON_PRIMARY    | \
+					 RBD_FEATURE_CRYPTO)
 
 /// features that may be dynamically enabled or disabled
 #define RBD_FEATURES_MUTABLE            (RBD_FEATURE_EXCLUSIVE_LOCK | \
