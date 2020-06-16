@@ -141,6 +141,9 @@ int get_journal_options(const boost::program_options::variables_map &vm,
 int get_flatten_option(const boost::program_options::variables_map &vm,
                        librbd::ImageOptions *opts);
 
+int get_crypto_options(const boost::program_options::variables_map &vm,
+                       librbd::ImageOptions *opts);
+
 int get_image_size(const boost::program_options::variables_map &vm,
                    uint64_t *size);
 

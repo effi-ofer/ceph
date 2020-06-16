@@ -29,6 +29,7 @@ const std::map<uint64_t, std::string> ImageFeatures::FEATURE_MAPPING = {
   {RBD_FEATURE_OPERATIONS, RBD_FEATURE_NAME_OPERATIONS},
   {RBD_FEATURE_MIGRATING, RBD_FEATURE_NAME_MIGRATING},
   {RBD_FEATURE_NON_PRIMARY, RBD_FEATURE_NAME_NON_PRIMARY},
+  {RBD_FEATURE_CRYPTO, RBD_FEATURE_NAME_CRYPTO},
 };
 
 Format::Formatter Format::create_formatter(bool pretty) const {
@@ -246,6 +247,8 @@ void add_create_image_options(po::options_description *opt,
     (IMAGE_DATA_POOL.c_str(), po::value<std::string>(), "data pool")
     (IMAGE_MIRROR_IMAGE_MODE.c_str(), po::value<MirrorImageMode>(),
      "mirror image mode [journal or snapshot]");
+
+  // Effi TODO: Do I need to add an option here for the crypto stuff?
 
   add_create_journal_options(opt);
 }

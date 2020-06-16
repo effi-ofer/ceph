@@ -31,7 +31,7 @@
 #define RBD_FEATURE_NAME_OPERATIONS      "operations"
 #define RBD_FEATURE_NAME_MIGRATING       "migrating"
 #define RBD_FEATURE_NAME_NON_PRIMARY     "non-primary"
-#define RBD_FEATURE_NAME_CRYPTO          "cryptography"
+#define RBD_FEATURE_NAME_CRYPTO          "crypto"
 
 /// features that make an image inaccessible for read or write by
 /// clients that don't understand them
@@ -48,7 +48,8 @@
                                          RBD_FEATURE_JOURNALING     | \
                                          RBD_FEATURE_OPERATIONS     | \
                                          RBD_FEATURE_MIGRATING      | \
-                                         RBD_FEATURE_NON_PRIMARY)
+                                         RBD_FEATURE_NON_PRIMARY    | \
+					 RBD_FEATURE_CRYPTO)
 
 #define RBD_FEATURES_ALL          	(RBD_FEATURE_LAYERING       | \
 					 RBD_FEATURE_STRIPINGV2     | \
