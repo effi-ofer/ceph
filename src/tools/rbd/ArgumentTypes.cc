@@ -246,9 +246,8 @@ void add_create_image_options(po::options_description *opt,
     (IMAGE_STRIPE_COUNT.c_str(), po::value<uint64_t>(), "stripe count")
     (IMAGE_DATA_POOL.c_str(), po::value<std::string>(), "data pool")
     (IMAGE_MIRROR_IMAGE_MODE.c_str(), po::value<MirrorImageMode>(),
-     "mirror image mode [journal or snapshot]");
-
-  // Effi TODO: Do I need to add an option here for the crypto stuff?
+     "mirror image mode [journal or snapshot]")
+    (CRYPTO.c_str(), po::value<std::string>(), "crypto key");
 
   add_create_journal_options(opt);
 }

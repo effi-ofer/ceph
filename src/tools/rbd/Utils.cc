@@ -436,6 +436,7 @@ int get_image_options(const boost::program_options::variables_map &vm,
   bool features_specified = false;
   bool features_clear_specified = false;
   bool stripe_specified = false;
+  printf("in get_image_options()\n");
 
   if (vm.count(at::IMAGE_ORDER)) {
     order = vm[at::IMAGE_ORDER].as<uint64_t>();
@@ -614,8 +615,10 @@ int get_flatten_option(const boost::program_options::variables_map &vm,
 
 int get_crypto_options(const boost::program_options::variables_map &vm,
                        librbd::ImageOptions *opts) {
-  if (vm.count(at::CRYPTO) && vm[at::CRYPTO].as<bool>()) {
+  printf("in get_crypto_options()\n");
+  if (vm.count(at::CRYPTO)) {
     opts->set(RBD_IMAGE_OPTION_CRYPTO, vm[at::CRYPTO].as<std::string>());
+    printf("... set crypto \n");
   }
   return 0;
 }
