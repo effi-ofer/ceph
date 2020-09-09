@@ -306,6 +306,10 @@ Context *OpenRequest<I>::handle_v2_get_initial_metadata(int *result) {
     send_v2_get_create_timestamp();
   }
 
+  if (m_image_ctx->test_features(RBD_FEATURE_CRYPTO)) {
+    printf("Opening a crypto image\n");
+  }
+
   return nullptr;
 }
 
