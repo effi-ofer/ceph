@@ -154,6 +154,10 @@ private:
   void fetch_mirror_mode();
   void handle_fetch_mirror_mode(int r);
 
+  void create_luks_image(const char *hash, 
+                         const char *password, 
+                         int password_length);
+
   void journal_create();
   void handle_journal_create(int r);
 

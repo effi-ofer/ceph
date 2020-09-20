@@ -215,7 +215,7 @@ if(WITH_EVENTTRACE)
 endif()
 target_link_libraries(rbd_internal PRIVATE
   osdc)
-target_include_directories(rbd_internal PRIVATE ${OPENSSL_INCLUDE_DIR})
+#target_include_directories(rbd_internal PRIVATE ${OPENSSL_INCLUDE_DIR})
 
 if(WITH_RBD_RWL)
   target_link_libraries(rbd_internal

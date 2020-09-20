@@ -18,6 +18,9 @@
 #include "librbd/journal/RemoveRequest.h"
 #include "librbd/mirror/EnableRequest.h"
 #include "journal/Journaler.h"
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
 
 
 #define dout_subsys ceph_subsys_rbd
@@ -547,19 +550,22 @@ void CreateRequest<I>::handle_object_map_resize(int r) {
 
 #if 0
 // TODO: this should return/throw an error?
+// hash == "sha256"
 template<typename I>
-void CreateRequest<I>::create_luks_image(uint8_t *password, 
-		                         int password_length) {
+void CreateRequest<I>::create_luks_image(const char *hash,
+                                         const char *password, 
+                                         int password_length) {
   const int masterkey_length = 64;
   const int salt_length = 64;
   const int iterations = 1000;  // RFC 2898 suggest at least 1000
   uint8_t masterkey[masterkey_length];
   uint8_t pbkdf2_masterkey[masterkey_length];
   uint8_t salt[salt_length];
-  int     ret       = 0;
+  const EVP_MD *hash_id = NULL;
+  int ret = 0;
 
   // obtain masterkey randomly
-  RAND_bytes((unsigned char *)masterkey, masterkey_len);
+  RAND_bytes((unsigned char *)masterkey, masterkey_length);
 
   // generate the salt used for hashing the masterkey with PBKDF2
   RAND_bytes((unsigned char *)salt, salt_length);
@@ -567,9 +573,14 @@ void CreateRequest<I>::create_luks_image(uint8_t *password,
   // To make password cracking more difficult 
   // stretch the key by hashing the masterkey along with the salt
   // TODO: what's the right hash function for the digest? 
-  if (!PKCS5_PBKDF2_HMAC(masterkey, masterkey_length,
+  hash_id = EVP_get_digestbyname(hash);
+  if (!hash_id) {
+    // TODO: handle error code
+    printf("Effi: could not generate masterkey.\n");
+  }
+  if (!PKCS5_PBKDF2_HMAC((const char *)masterkey, masterkey_length,
                          (const unsigned char *)salt, salt_length,
-                         iterations, EVP_sha1(),
+                         iterations, hash_id,  
                          masterkey_length, (unsigned char *)pbkdf2_masterkey)) {
     // TODO: handle error code
     printf("Effi: could not generate masterkey.\n");
@@ -589,7 +600,8 @@ void CreateRequest<I>::fetch_mirror_mode() {
   // Effi TODO: why is this code here in fetch_mirror_mode??
   if (m_features & RBD_FEATURE_CRYPTO) {
     printf("Effi: Crypto is enabled\n");
-    // CreateRequest<I>::create_luks_image("testing123", sizeof("testing123"));
+    //CreateRequest<I>::create_luks_image("sha256", 
+    //                                    "testing123", sizeof("testing123"));
     // crypto_enable();
   }
 
