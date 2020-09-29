@@ -548,21 +548,24 @@ void CreateRequest<I>::handle_object_map_resize(int r) {
   fetch_mirror_mode();
 }
 
-#if 0
+int cipher_encrypt(const char *in, char *out, size_t length, 
+
 // TODO: this should return/throw an error?
+// TODO: handle error code
 // hash == "sha256"
 template<typename I>
-void CreateRequest<I>::create_luks_image(const char *hash,
-                                         const char *password, 
-                                         int password_length) {
-  const int masterkey_length = 64;
-  const int salt_length = 64;
-  const int iterations = 1000;  // RFC 2898 suggest at least 1000
+int CreateRequest<I>::create_luks_image(const char *hash,
+                                        const char *password, 
+                                        const size_t password_length) {
+  const size_t masterkey_length = 64;
+  const size_t salt_length = 64;
+  const size_t iterations = 1000;  // RFC 2898 suggest at least 1000
   uint8_t masterkey[masterkey_length];
   uint8_t pbkdf2_masterkey[masterkey_length];
   uint8_t salt[salt_length];
   const EVP_MD *hash_id = NULL;
-  int ret = 0;
+
+  printf("Effi: in create_luks_image\n");
 
   // obtain masterkey randomly
   RAND_bytes((unsigned char *)masterkey, masterkey_length);
@@ -572,36 +575,46 @@ void CreateRequest<I>::create_luks_image(const char *hash,
 
   // To make password cracking more difficult 
   // stretch the key by hashing the masterkey along with the salt
-  // TODO: what's the right hash function for the digest? 
+  // TODO: need to set iterations by benchmarking the system
   hash_id = EVP_get_digestbyname(hash);
   if (!hash_id) {
-    // TODO: handle error code
     printf("Effi: could not generate masterkey.\n");
+    return (-1);
   }
   if (!PKCS5_PBKDF2_HMAC((const char *)masterkey, masterkey_length,
                          (const unsigned char *)salt, salt_length,
                          iterations, hash_id,  
                          masterkey_length, (unsigned char *)pbkdf2_masterkey)) {
-    // TODO: handle error code
-    printf("Effi: could not generate masterkey.\n");
+    printf("Effi: could not pbkdf2 masterkey.\n");
+    return (-2);
   }
 
   // wrap masterkey + salt with passphrase password 
 
+  if (cipher_encrypt(pbkdf2_masterkey, wrapped_masterkey, masterkey_length,  
+                     salt, salt_length) != 0) {
+    printf("Effi: could not wrap masterkey.\n");
+    return (-3);
+  }
+
   // store encrypted masterkey in image meta data
   
-
-  return;
+  printf("Effi: masterkey=%x%x%x%x, pbkdf2_masterkey=%x%x%x%x\n", 
+         masterkey[0], masterkey[1], masterkey[2], masterkey[3], 
+         pbkdf2_masterkey[0],
+         pbkdf2_masterkey[1],
+         pbkdf2_masterkey[2],
+         pbkdf2_masterkey[3]);
+  return (0);
 }
-#endif
 
 template<typename I>
 void CreateRequest<I>::fetch_mirror_mode() {
   // Effi TODO: why is this code here in fetch_mirror_mode??
   if (m_features & RBD_FEATURE_CRYPTO) {
     printf("Effi: Crypto is enabled\n");
-    //CreateRequest<I>::create_luks_image("sha256", 
-    //                                    "testing123", sizeof("testing123"));
+    CreateRequest<I>::create_luks_image("sha256", 
+                                        "testing123", sizeof("testing123"));
     // crypto_enable();
   }
 
