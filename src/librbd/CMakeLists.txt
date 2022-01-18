@@ -143,6 +143,7 @@ set(librbd_internal_srcs
   migration/RawFormat.cc
   migration/RawSnapshot.cc
   migration/S3Stream.cc
+  migration/NBDStream.cc
   migration/SourceSpecBuilder.cc
   migration/Utils.cc
   mirror/DemoteRequest.cc
@@ -239,6 +240,8 @@ if(LINUX AND HAVE_LIBCRYPTSETUP)
   target_include_directories(rbd_internal PRIVATE ${LIBCRYPTSETUP_INCLUDE_DIR})
   target_link_libraries(rbd_internal PRIVATE ${LIBCRYPTSETUP_LIBRARIES})
 endif()
+target_include_directories(rbd_internal PRIVATE /home/effi/libnbd/include)
+target_link_libraries(rbd_internal PRIVATE /home/effi/libnbd/lib/.libs/libnbd.so)
 
 add_custom_target(librbd_plugins)
 set(librbd_plugins_dir ${CEPH_INSTALL_PKGLIBDIR}/librbd)

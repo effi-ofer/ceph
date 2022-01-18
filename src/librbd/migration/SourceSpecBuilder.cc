@@ -7,6 +7,7 @@
 #include "librbd/migration/FileStream.h"
 #include "librbd/migration/HttpStream.h"
 #include "librbd/migration/S3Stream.h"
+#include "librbd/migration/NBDStream.h"
 #include "librbd/migration/NativeFormat.h"
 #include "librbd/migration/QCOWFormat.h"
 #include "librbd/migration/RawFormat.h"
@@ -132,6 +133,8 @@ int SourceSpecBuilder<I>::build_stream(
     stream->reset(HttpStream<I>::create(m_image_ctx, stream_obj));
   } else if (type == "s3") {
     stream->reset(S3Stream<I>::create(m_image_ctx, stream_obj));
+  } else if (type == "nbd") {
+    stream->reset(NBDStream<I>::create(m_image_ctx, stream_obj));
   } else {
     lderr(cct) << "unknown or unsupported stream type '" << type << "'"
                << dendl;
