@@ -74,11 +74,6 @@ void NBDStream<I>::open(Context* on_finish) {
     on_finish->complete(-EINVAL);
     return;
   }
-  if (nbd_clear_meta_contexts (nbd) != 0) {
-    lderr(m_cct) << "failed to clear nbd meta context '" << dendl;
-    on_finish->complete(-EINVAL);
-    return;
-  }
   if (nbd_add_meta_context (nbd, LIBNBD_CONTEXT_BASE_ALLOCATION) == -1) {
     lderr(m_cct) << "failed to add nbd meta context '" << dendl;
     on_finish->complete(-EINVAL);
@@ -141,11 +136,8 @@ void NBDStream<I>::read(io::Extents&& byte_extents, bufferlist* data,
       on_finish->complete(-EINVAL);
       return;
     }
-    if (read_status == LIBNBD_READ_HOLE) {
-      lderr(m_cct) << "sparse" << dendl;
-      on_finish->complete(-ENOENT);
-      return;
-    }
+    ldout(m_cct, 20) << "status=" << read_status << " offset=" << byte_offset 
+      << " length=" << byte_length << dendl;
   }
   on_finish->complete(0);
 }
@@ -156,11 +148,10 @@ int check_extent(void *data,
                  uint32_t *entries, size_t nr_entries, int *error) {
   io::SparseExtents* sparse_extents = (io::SparseExtents*)data;
   uint64_t length = 0;
-  for (int i=0; i<nr_entries; i+=2) {
+  for (size_t i=0; i<nr_entries; i+=2) {
     length += entries[i];
   }
   auto state = io::SPARSE_EXTENT_STATE_DATA;
-  // strcmp (metacontext, LIBNBD_CONTEXT_BASE_ALLOCATION) == 0 
   if (nr_entries == 2) {
     if (entries[1] & (LIBNBD_STATE_HOLE | LIBNBD_STATE_ZERO)) {
       state = io::SPARSE_EXTENT_STATE_ZEROED;
@@ -178,8 +169,6 @@ void NBDStream<I>::list_snap(io::Extents&& image_extents,
   ldout(m_cct, 20) << "NBDStream::list_snap" << dendl;
   for (auto& [byte_offset, byte_length] : image_extents) {
     ldout(m_cct, 20) << "image_offset=" << byte_offset << dendl;
-    // sparse_extents->insert(image_offset, image_length,
-    //                        {io::SPARSE_EXTENT_STATE_DNE, image_length});
     if (nbd_block_status(nbd, byte_length, byte_offset,
       (nbd_extent_callback) { .callback = check_extent, .user_data = sparse_extents },
       0) == -1) {
