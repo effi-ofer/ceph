@@ -16,6 +16,7 @@
 #include "librbd/migration/HttpClient.h"
 #include "librbd/migration/HttpProcessorInterface.h"
 #include <boost/beast/http.hpp>
+#include <thread>
 
 #undef FMT_HEADER_ONLY
 #define FMT_HEADER_ONLY 1
@@ -110,35 +111,58 @@ void NBDStream<I>::get_size(uint64_t* size, Context* on_finish) {
   on_finish->complete(0);
 }
 
-int pread_cb(void *data, const void *buf, 
-             size_t count, uint64_t offset,
-             unsigned status, int *error) {
-  *(unsigned *)data = status;
-  return (0);
-}
-
 template <typename I>
 void NBDStream<I>::read(io::Extents&& byte_extents, bufferlist* data,
                         Context* on_finish) {
   ldout(m_cct, 20) << "byte_extents=" << byte_extents << dendl;
+  int j=0;
+  ldout(m_cct, 20) << "pre effi=" << j << dendl;
+  for (int i=0; i<100000; i++) {
+    j+=1;
+  }
+  ldout(m_cct, 20) << "effi=" << j << dendl;
+  
 
+  auto i=0;
+  int64_t cookies[byte_extents.size()];
   for (auto [byte_offset, byte_length] : byte_extents) {
+    ldout(m_cct, 20) << "byte_offset=" << byte_offset << dendl;
+    ldout(m_cct, 20) << "byte_length=" << byte_length << dendl;
     auto ptr = buffer::ptr_node::create(buffer::create_small_page_aligned(
       byte_length));
     auto buffer = boost::asio::mutable_buffer(ptr->c_str(), byte_length);
     data->push_back(std::move(ptr));
-    unsigned read_status=0;
-    if (nbd_pread_structured(nbd, boost::asio::buffer_cast<void *>(buffer),
-      byte_length, byte_offset, 
-      (nbd_chunk_callback) { .callback = pread_cb, .user_data = &read_status },
-      0) == -1) {
-      lderr(m_cct) << "failed to read" << dendl;
+/**
+    cookies[i] = nbd_aio_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
+      byte_length, byte_offset, NBD_NULL_COMPLETION, 0);
+**/
+    cookies[i] = nbd_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
+      byte_length, byte_offset, 0);
+    if(cookies[i] == -1) {
+      lderr(m_cct) << "nbd_aio_pread: " << nbd_get_error() << 
+                      " (errno=" << nbd_get_errno() << ")" <<  dendl;
       on_finish->complete(-EINVAL);
       return;
     }
-    ldout(m_cct, 20) << "status=" << read_status << " offset=" << byte_offset 
-      << " length=" << byte_length << dendl;
   }
+
+/**
+  for (unsigned j=0; j<byte_extents.size(); j++) {
+    ldout(m_cct, 20) << "j=" << j << dendl;
+    int status;
+    while ((status = nbd_aio_command_completed(nbd, cookies[j])) == 0) {
+      nbd_poll(nbd, 1);
+    }
+    if (status == -1) {
+      lderr(m_cct) << "nbd_aio_command_completed: " << nbd_get_error()
+                   << " (errno=" << nbd_get_errno() << ")" <<  dendl;
+      on_finish->complete(-EINVAL);
+      return;
+    }
+  }
+**/
+
+  ldout(m_cct, 20) << "data=" << data << dendl;
   on_finish->complete(0);
 }
 
@@ -163,16 +187,34 @@ int check_extent(void *data,
 }
 
 template <typename I>
-void NBDStream<I>::list_snap(io::Extents&& image_extents,
-                             io::SparseExtents* sparse_extents, 
-                             Context* on_finish) {
+void NBDStream<I>::list_raw_snap(io::Extents&& image_extents,
+                                 io::SparseExtents* sparse_extents, 
+                                 Context* on_finish) {
   ldout(m_cct, 20) << "NBDStream::list_snap" << dendl;
+  int64_t cookies[image_extents.size()];
+  auto i=0;
   for (auto& [byte_offset, byte_length] : image_extents) {
     ldout(m_cct, 20) << "image_offset=" << byte_offset << dendl;
-    if (nbd_block_status(nbd, byte_length, byte_offset,
-      (nbd_extent_callback) { .callback = check_extent, .user_data = sparse_extents },
-      0) == -1) {
-      lderr(m_cct) << "nbd_block_status" << dendl;
+    cookies[i] = nbd_aio_block_status(nbd, byte_length, byte_offset,
+      (nbd_extent_callback) { .callback=check_extent, .user_data=sparse_extents },
+      NBD_NULL_COMPLETION, 0); 
+    if (cookies[i] == -1) {
+      lderr(m_cct) << "nbd_aio_block_status: " << nbd_get_error()
+                   << " (errno=" << nbd_get_errno() << ")" <<  dendl;
+      on_finish->complete(-EINVAL);
+      return;
+    }
+    i++;
+  }
+
+  for (unsigned j=0; j<image_extents.size(); j++) {
+    int status;
+    while ((status = nbd_aio_command_completed(nbd, cookies[j])) == 0) {
+      nbd_poll(nbd, 1);
+    }
+    if (status == -1) {
+      lderr(m_cct) << "nbd_aio_command_completed: " << nbd_get_error()
+                   << " (errno=" << nbd_get_errno() << ")" <<  dendl;
       on_finish->complete(-EINVAL);
       return;
     }

@@ -213,6 +213,12 @@ if(WITH_RBD AND LINUX)
   set(HAVE_LIBCRYPTSETUP ${LIBCRYPTSETUP_FOUND})
 endif()
 
+# libnbd 
+if(WITH_RBD AND LINUX)
+  find_package(libnbd-dev REQUIRED)
+  set(HAVE_LIBNBD-DEV ${LIBNBD-DEV_FOUND})
+endif()
+
 include(CMakeDependentOption)
 
 CMAKE_DEPENDENT_OPTION(WITH_ZBD "Enable libzbd bluestore backend" OFF

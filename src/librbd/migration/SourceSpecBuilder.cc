@@ -7,11 +7,14 @@
 #include "librbd/migration/FileStream.h"
 #include "librbd/migration/HttpStream.h"
 #include "librbd/migration/S3Stream.h"
-#include "librbd/migration/NBDStream.h"
 #include "librbd/migration/NativeFormat.h"
 #include "librbd/migration/QCOWFormat.h"
 #include "librbd/migration/RawFormat.h"
 #include "librbd/migration/RawSnapshot.h"
+
+#if defined(HAVE_LIBCRYPTSETUP)
+#include "librbd/migration/NBDStream.h"
+#endif
 
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
@@ -134,7 +137,9 @@ int SourceSpecBuilder<I>::build_stream(
   } else if (type == "s3") {
     stream->reset(S3Stream<I>::create(m_image_ctx, stream_obj));
   } else if (type == "nbd") {
+#if defined(HAVE_LIBCRYPTSETUP)
     stream->reset(NBDStream<I>::create(m_image_ctx, stream_obj));
+#endif
   } else {
     lderr(cct) << "unknown or unsupported stream type '" << type << "'"
                << dendl;

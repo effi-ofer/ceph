@@ -44,9 +44,9 @@ public:
   void read(io::Extents&& byte_extents, bufferlist* data,
             Context* on_finish) override;
 
-  void list_snap(io::Extents&& image_extents, 
-                 io::SparseExtents* sparse_extents,
-                 Context* on_finish);
+  void list_raw_snap(io::Extents&& image_extents, 
+                     io::SparseExtents* sparse_extents,
+                     Context* on_finish) override;
 private:
   ImageCtxT* m_image_ctx;
   CephContext* m_cct;
