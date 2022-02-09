@@ -7,12 +7,8 @@
 #include "include/int_types.h"
 #include "librbd/migration/StreamInterface.h"
 #include <json_spirit/json_spirit.h>
-#include <memory>
-#include <string>
 #include <libnbd.h>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/strand.hpp>
-#include <boost/asio/posix/basic_stream_descriptor.hpp>
 
 struct Context;
 
@@ -29,7 +25,7 @@ template <typename ImageCtxT>
 class NBDStream : public StreamInterface {
 public:
   static NBDStream* create(ImageCtxT* image_ctx,
-                            const json_spirit::mObject& json_object) {
+                           const json_spirit::mObject& json_object) {
     return new NBDStream(image_ctx, json_object);
   }
 

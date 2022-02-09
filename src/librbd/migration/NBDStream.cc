@@ -2,24 +2,11 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "librbd/migration/NBDStream.h"
-#include "common/armor.h"
-#include "common/ceph_crypto.h"
-#include "common/ceph_time.h"
 #include "common/dout.h"
 #include "common/errno.h"
 #include "librbd/AsioEngine.h"
 #include "librbd/ImageCtx.h"
-#include "librbd/Utils.h"
-#include "librbd/asio/Utils.h"
-#include "librbd/io/AioCompletion.h"
-#include "librbd/io/ReadResult.h"
-#include "librbd/migration/HttpClient.h"
-#include "librbd/migration/HttpProcessorInterface.h"
-#include <boost/beast/http.hpp>
 #include <boost/asio/buffer.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/asio/read.hpp>
-#include <thread>
 
 #undef FMT_HEADER_ONLY
 #define FMT_HEADER_ONLY 1
@@ -42,13 +29,6 @@ const std::string PORT_KEY {"port"};
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::migration::NBDStream: " << this \
                            << " " << __func__ << ": "
-
-int read_completed (void *user_data, int *error)
-{
-  Context *on_finish = (Context *)user_data;
-  on_finish->complete(0);
-  return (0);
-}
 
 template <typename I>
 struct NBDStream<I>::ReadRequest {
@@ -75,16 +55,7 @@ struct NBDStream<I>::ReadRequest {
     struct nbd_handle *nbd = nbd_stream->nbd;
 
     ldout(cct, 20) << "byte_extents=" << byte_extents << dendl;
-    int j=0;
-    ldout(cct, 20) << "pre effi=" << j << dendl;
-    for (int i=0; i<100000; i++) {
-      j+=1;
-    }
-    ldout(cct, 20) << "effi=" << j << dendl;
-    
 
-    auto i=0;
-    int64_t cookies[byte_extents.size()];
     for (auto [byte_offset, byte_length] : byte_extents) {
       ldout(cct, 20) << "byte_offset=" << byte_offset << dendl;
       ldout(cct, 20) << "byte_length=" << byte_length << dendl;
@@ -92,12 +63,9 @@ struct NBDStream<I>::ReadRequest {
         byte_length));
       auto buffer = boost::asio::mutable_buffer(ptr->c_str(), byte_length);
       data->push_back(std::move(ptr));
-      cookies[i] = nbd_aio_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
-        byte_length, byte_offset, 
-        (nbd_completion_callback) { .callback=read_completed, .user_data=on_finish }, 0);
-      // cookies[i] = nbd_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
-      //   byte_length, byte_offset, 0);
-      if(cookies[i] == -1) {
+      auto rc = nbd_aio_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
+        byte_length, byte_offset, NBD_NULL_COMPLETION, 0);
+      if(rc == -1) {
         lderr(cct) << "nbd_aio_pread: " << nbd_get_error() << 
                         " (errno=" << nbd_get_errno() << ")" <<  dendl;
         on_finish->complete(-EINVAL);
@@ -105,19 +73,16 @@ struct NBDStream<I>::ReadRequest {
       }
     }
 
-    for (unsigned j=0; j<byte_extents.size(); j++) {
-      ldout(cct, 20) << "j=" << j << dendl;
-      int status;
-      while ((status = nbd_aio_command_completed(nbd, cookies[j])) == 0) {
-        nbd_poll(nbd, 1);
-      }
-      if (status == -1) {
-        lderr(cct) << "nbd_aio_command_completed: " << nbd_get_error()
+    while (nbd_aio_in_flight(nbd) > 0) {
+      if (nbd_poll (nbd, -1) == -1) {
+        fprintf (stderr, "%s\n", nbd_get_error ());
+        lderr(cct) << "nbd_aio_in_flight: " << nbd_get_error()
                      << " (errno=" << nbd_get_errno() << ")" <<  dendl;
         on_finish->complete(-EINVAL);
         return;
       }
     }
+    finish(0);
   }
 
   void finish(int r) {
@@ -181,7 +146,7 @@ void NBDStream<I>::open(Context* on_finish) {
     return;
   }
 
-  ldout(m_cct, 10) << "url=" << m_url << ", "
+  ldout(m_cct, 20) << "url=" << m_url << ", "
                    << "port=" << m_port << dendl;
 
   on_finish->complete(0);
@@ -189,7 +154,7 @@ void NBDStream<I>::open(Context* on_finish) {
 
 template <typename I>
 void NBDStream<I>::close(Context* on_finish) {
-  ldout(m_cct, 10) << dendl;
+  ldout(m_cct, 20) << dendl;
 
   if (nbd != NULL) {
     nbd_close(nbd);
@@ -199,7 +164,7 @@ void NBDStream<I>::close(Context* on_finish) {
 
 template <typename I>
 void NBDStream<I>::get_size(uint64_t* size, Context* on_finish) {
-  ldout(m_cct, 10) << dendl;
+  ldout(m_cct, 20) << dendl;
 
   *size = nbd_get_size(nbd);
   on_finish->complete(0);
@@ -209,10 +174,9 @@ template <typename I>
 void NBDStream<I>::read(io::Extents&& byte_extents, bufferlist* data,
                         Context* on_finish) {
   ldout(m_cct, 20) << byte_extents << dendl;
-
   auto ctx = new ReadRequest(this, std::move(byte_extents), data, on_finish);
 
-  // execute IO operations in a single strand to prevent seek races
+  // execute IO operations in a single strand to prevent races
   boost::asio::post(m_strand, [ctx]() { ctx->send(); });
 }
 
@@ -232,7 +196,6 @@ int check_extent(void *data,
     }
   }
   sparse_extents->insert(offset, length, {state, length});
-  
   return (0);
 }
 
@@ -240,36 +203,29 @@ template <typename I>
 void NBDStream<I>::list_raw_snap(io::Extents&& image_extents,
                                  io::SparseExtents* sparse_extents, 
                                  Context* on_finish) {
-  ldout(m_cct, 20) << "NBDStream::list_snap" << dendl;
-  int64_t cookies[image_extents.size()];
-  auto i=0;
+  ldout(m_cct, 20) << dendl;
   for (auto& [byte_offset, byte_length] : image_extents) {
-    ldout(m_cct, 20) << "image_offset=" << byte_offset << dendl;
-    cookies[i] = nbd_aio_block_status(nbd, byte_length, byte_offset,
+    auto rc = nbd_aio_block_status(nbd, byte_length, byte_offset,
       (nbd_extent_callback) { .callback=check_extent, .user_data=sparse_extents },
       NBD_NULL_COMPLETION, 0); 
-    if (cookies[i] == -1) {
+    if (rc == -1) {
       lderr(m_cct) << "nbd_aio_block_status: " << nbd_get_error()
                    << " (errno=" << nbd_get_errno() << ")" <<  dendl;
       on_finish->complete(-EINVAL);
       return;
     }
-    i++;
   }
 
-  for (unsigned j=0; j<image_extents.size(); j++) {
-    int status;
-    while ((status = nbd_aio_command_completed(nbd, cookies[j])) == 0) {
-      nbd_poll(nbd, 1);
-    }
-    if (status == -1) {
-      lderr(m_cct) << "nbd_aio_command_completed: " << nbd_get_error()
+  while (nbd_aio_in_flight(nbd) > 0) {
+    if (nbd_poll (nbd, -1) == -1) {
+      fprintf (stderr, "%s\n", nbd_get_error ());
+      lderr(m_cct) << "nbd_aio_in_flight: " << nbd_get_error()
                    << " (errno=" << nbd_get_errno() << ")" <<  dendl;
       on_finish->complete(-EINVAL);
       return;
     }
   }
-
+ 
   on_finish->complete(0);
 }
 
