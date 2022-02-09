@@ -315,15 +315,11 @@ void ObjectReadRequest<I>::handle_read_parent(int r) {
 template <typename I>
 void ObjectReadRequest<I>::copyup() {
   I *image_ctx = this->m_ictx;
-  ldout(image_ctx->cct, 20) << "exclusive_lock=" << image_ctx->exclusive_lock << "is_lock_owner=" << image_ctx->exclusive_lock->is_lock_owner() << dendl;
-  ldout(image_ctx->cct, 20) << "testing lock" << dendl;
   if (!is_copy_on_read(image_ctx, this->m_io_context)) {
-    ldout(image_ctx->cct, 20) << "finished early" << dendl;
     this->finish(0);
     return;
   }
 
-  ldout(image_ctx->cct, 20) << "about to copyup" << dendl;
   image_ctx->owner_lock.lock_shared();
   image_ctx->image_lock.lock_shared();
   Extents parent_extents;

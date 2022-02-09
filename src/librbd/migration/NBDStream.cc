@@ -16,6 +16,9 @@
 #include "librbd/migration/HttpClient.h"
 #include "librbd/migration/HttpProcessorInterface.h"
 #include <boost/beast/http.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/read.hpp>
 #include <thread>
 
 #undef FMT_HEADER_ONLY
@@ -40,10 +43,101 @@ const std::string PORT_KEY {"port"};
 #define dout_prefix *_dout << "librbd::migration::NBDStream: " << this \
                            << " " << __func__ << ": "
 
+int read_completed (void *user_data, int *error)
+{
+  Context *on_finish = (Context *)user_data;
+  on_finish->complete(0);
+  return (0);
+}
+
+template <typename I>
+struct NBDStream<I>::ReadRequest {
+  NBDStream*  nbd_stream;
+  io::Extents byte_extents;
+  bufferlist* data;
+  Context* on_finish;
+
+  ReadRequest(NBDStream* nbd_stream, io::Extents&& byte_extents,
+              bufferlist* data, Context* on_finish)
+    : nbd_stream(nbd_stream), byte_extents(std::move(byte_extents)),
+      data(data), on_finish(on_finish) {
+    auto cct = nbd_stream->m_cct;
+    ldout(cct, 20) << dendl;
+  }
+
+  void send() {
+    data->clear();
+    read();
+  }
+
+  void read() {
+    auto cct = nbd_stream->m_cct;  
+    struct nbd_handle *nbd = nbd_stream->nbd;
+
+    ldout(cct, 20) << "byte_extents=" << byte_extents << dendl;
+    int j=0;
+    ldout(cct, 20) << "pre effi=" << j << dendl;
+    for (int i=0; i<100000; i++) {
+      j+=1;
+    }
+    ldout(cct, 20) << "effi=" << j << dendl;
+    
+
+    auto i=0;
+    int64_t cookies[byte_extents.size()];
+    for (auto [byte_offset, byte_length] : byte_extents) {
+      ldout(cct, 20) << "byte_offset=" << byte_offset << dendl;
+      ldout(cct, 20) << "byte_length=" << byte_length << dendl;
+      auto ptr = buffer::ptr_node::create(buffer::create_small_page_aligned(
+        byte_length));
+      auto buffer = boost::asio::mutable_buffer(ptr->c_str(), byte_length);
+      data->push_back(std::move(ptr));
+      cookies[i] = nbd_aio_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
+        byte_length, byte_offset, 
+        (nbd_completion_callback) { .callback=read_completed, .user_data=on_finish }, 0);
+      // cookies[i] = nbd_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
+      //   byte_length, byte_offset, 0);
+      if(cookies[i] == -1) {
+        lderr(cct) << "nbd_aio_pread: " << nbd_get_error() << 
+                        " (errno=" << nbd_get_errno() << ")" <<  dendl;
+        on_finish->complete(-EINVAL);
+        return;
+      }
+    }
+
+    for (unsigned j=0; j<byte_extents.size(); j++) {
+      ldout(cct, 20) << "j=" << j << dendl;
+      int status;
+      while ((status = nbd_aio_command_completed(nbd, cookies[j])) == 0) {
+        nbd_poll(nbd, 1);
+      }
+      if (status == -1) {
+        lderr(cct) << "nbd_aio_command_completed: " << nbd_get_error()
+                     << " (errno=" << nbd_get_errno() << ")" <<  dendl;
+        on_finish->complete(-EINVAL);
+        return;
+      }
+    }
+  }
+
+  void finish(int r) {
+    auto cct = nbd_stream->m_cct;
+    ldout(cct, 20) << "r=" << r << dendl;
+
+    if (r < 0) {
+      data->clear();
+    }
+
+    on_finish->complete(r);
+    delete this;
+  }
+};
+
 template <typename I>
 NBDStream<I>::NBDStream(I* image_ctx, const json_spirit::mObject& json_object)
   : m_image_ctx(image_ctx), m_cct(image_ctx->cct),
-    m_asio_engine(image_ctx->asio_engine), m_json_object(json_object) {
+    m_asio_engine(image_ctx->asio_engine), m_json_object(json_object),
+    m_strand(boost::asio::make_strand(*m_asio_engine)) {
 }
 
 template <typename I>
@@ -114,56 +208,12 @@ void NBDStream<I>::get_size(uint64_t* size, Context* on_finish) {
 template <typename I>
 void NBDStream<I>::read(io::Extents&& byte_extents, bufferlist* data,
                         Context* on_finish) {
-  ldout(m_cct, 20) << "byte_extents=" << byte_extents << dendl;
-  int j=0;
-  ldout(m_cct, 20) << "pre effi=" << j << dendl;
-  for (int i=0; i<100000; i++) {
-    j+=1;
-  }
-  ldout(m_cct, 20) << "effi=" << j << dendl;
-  
+  ldout(m_cct, 20) << byte_extents << dendl;
 
-  auto i=0;
-  int64_t cookies[byte_extents.size()];
-  for (auto [byte_offset, byte_length] : byte_extents) {
-    ldout(m_cct, 20) << "byte_offset=" << byte_offset << dendl;
-    ldout(m_cct, 20) << "byte_length=" << byte_length << dendl;
-    auto ptr = buffer::ptr_node::create(buffer::create_small_page_aligned(
-      byte_length));
-    auto buffer = boost::asio::mutable_buffer(ptr->c_str(), byte_length);
-    data->push_back(std::move(ptr));
-/**
-    cookies[i] = nbd_aio_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
-      byte_length, byte_offset, NBD_NULL_COMPLETION, 0);
-**/
-    cookies[i] = nbd_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
-      byte_length, byte_offset, 0);
-    if(cookies[i] == -1) {
-      lderr(m_cct) << "nbd_aio_pread: " << nbd_get_error() << 
-                      " (errno=" << nbd_get_errno() << ")" <<  dendl;
-      on_finish->complete(-EINVAL);
-      return;
-    }
-  }
+  auto ctx = new ReadRequest(this, std::move(byte_extents), data, on_finish);
 
-/**
-  for (unsigned j=0; j<byte_extents.size(); j++) {
-    ldout(m_cct, 20) << "j=" << j << dendl;
-    int status;
-    while ((status = nbd_aio_command_completed(nbd, cookies[j])) == 0) {
-      nbd_poll(nbd, 1);
-    }
-    if (status == -1) {
-      lderr(m_cct) << "nbd_aio_command_completed: " << nbd_get_error()
-                   << " (errno=" << nbd_get_errno() << ")" <<  dendl;
-      on_finish->complete(-EINVAL);
-      return;
-    }
-  }
-**/
-
-  ldout(m_cct, 20) << "data=" << data << dendl;
-  on_finish->complete(0);
+  // execute IO operations in a single strand to prevent seek races
+  boost::asio::post(m_strand, [ctx]() { ctx->send(); });
 }
 
 int check_extent(void *data, 

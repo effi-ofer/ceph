@@ -10,6 +10,9 @@
 #include <memory>
 #include <string>
 #include <libnbd.h>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/strand.hpp>
+#include <boost/asio/posix/basic_stream_descriptor.hpp>
 
 struct Context;
 
@@ -53,6 +56,8 @@ private:
   struct nbd_handle *nbd;
   std::shared_ptr<AsioEngine> m_asio_engine;
   json_spirit::mObject m_json_object;
+  boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
+  struct ReadRequest;
 };
 
 } // namespace migration
