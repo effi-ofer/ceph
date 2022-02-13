@@ -151,6 +151,11 @@ if(LINUX AND HAVE_LIBCRYPTSETUP)
           crypto/luks/test_mock_LoadRequest.cc)
 endif()
 
+if(LINUX AND HAVE_LIBNBD-DEV)
+  list(APPEND unittest_librbd_srcs
+          migration/test_mock_NBDStream.cc)
+endif()
+
 add_executable(unittest_librbd
   ${unittest_librbd_srcs}
   $<TARGET_OBJECTS:common_texttable_obj>)
