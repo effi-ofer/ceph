@@ -308,7 +308,7 @@ The ``nbd`` stream can be used to import from a remote NBD server. Its
             <format unique parameters>
             "stream": {
                 "type": "nbd",
-                "url": "<ip-path>",
+                "url": "<ip>",
                 "port": "<port>"
             }
         }
