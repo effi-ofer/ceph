@@ -10,7 +10,7 @@
 #include "librbd/io/ReadResult.h"
 #include "librbd/migration/SourceSpecBuilder.h"
 #include "librbd/migration/StreamInterface.h"
-#if defined(HAVE_LIBCRYPTSETUP)
+#if defined(HAVE_LIBNBD)
 #include "librbd/migration/NBDStream.h"
 #endif
 

@@ -151,7 +151,7 @@ if(LINUX AND HAVE_LIBCRYPTSETUP)
           crypto/luks/test_mock_LoadRequest.cc)
 endif()
 
-if(LINUX AND HAVE_LIBNBD-DEV)
+if(LINUX AND HAVE_LIBNBD)
   list(APPEND unittest_librbd_srcs
           migration/test_mock_NBDStream.cc)
 endif()

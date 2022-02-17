@@ -20,7 +20,7 @@ namespace migration {
 
 namespace {
 
-const std::string URL_KEY  {"url"};
+const std::string SERVER_KEY {"server"};
 const std::string PORT_KEY {"port"};
 
 } // anonymous namespace
@@ -29,6 +29,32 @@ const std::string PORT_KEY {"port"};
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::migration::NBDStream: " << this \
                            << " " << __func__ << ": "
+
+int check_extent(void *data, 
+                 const char *metacontext,
+                 uint64_t offset,
+                 uint32_t *entries, size_t nr_entries, int *error) {
+  io::SparseExtents* sparse_extents = (io::SparseExtents*)data;
+  uint64_t length = 0;
+  for (size_t i=0; i<nr_entries; i+=2) {
+    length += entries[i];
+  }
+  auto state = io::SPARSE_EXTENT_STATE_DATA;
+  if (nr_entries == 2) {
+    if (entries[1] & (LIBNBD_STATE_HOLE | LIBNBD_STATE_ZERO)) {
+      state = io::SPARSE_EXTENT_STATE_ZEROED;
+    }
+  }
+  sparse_extents->insert(offset, length, {state, length});
+  return 1;
+}
+
+int task_completed (void *user_data, int *error)
+{
+  Context* on_finish = (Context *)user_data;
+  on_finish->complete(0);
+  return 1;
+}
 
 template <typename I>
 struct NBDStream<I>::ReadRequest {
@@ -45,7 +71,7 @@ struct NBDStream<I>::ReadRequest {
     ldout(cct, 20) << dendl;
   }
 
-  void send() {
+  void send_read() {
     data->clear();
     read();
   }
@@ -64,25 +90,25 @@ struct NBDStream<I>::ReadRequest {
       auto buffer = boost::asio::mutable_buffer(ptr->c_str(), byte_length);
       data->push_back(std::move(ptr));
       auto rc = nbd_aio_pread(nbd, boost::asio::buffer_cast<void *>(buffer),
-        byte_length, byte_offset, NBD_NULL_COMPLETION, 0);
+        byte_length, byte_offset, 
+        (nbd_completion_callback) { .callback=task_completed,
+                                    .user_data=on_finish }, 0);
       if(rc == -1) {
-        lderr(cct) << "nbd_aio_pread: " << nbd_get_error() << 
-                        " (errno=" << nbd_get_errno() << ")" <<  dendl;
-        on_finish->complete(-EINVAL);
+        rc = nbd_get_errno();
+        lderr(cct) << "nbd_aio_pread: " << nbd_get_error()
+                   << " (errno=" << rc << ")" <<  dendl;
+        on_finish->complete(rc);
         return;
       }
     }
-
     while (nbd_aio_in_flight(nbd) > 0) {
-      if (nbd_poll (nbd, -1) == -1) {
-        fprintf (stderr, "%s\n", nbd_get_error ());
-        lderr(cct) << "nbd_aio_in_flight: " << nbd_get_error()
-                     << " (errno=" << nbd_get_errno() << ")" <<  dendl;
-        on_finish->complete(-EINVAL);
-        return;
+      if (nbd_poll(nbd, -1) == -1) {
+        auto rc = nbd_get_errno();
+        lderr(cct) << "nbd_poll: " << nbd_get_error()
+                   << " (errno=" << rc << ")" <<  dendl;
+        on_finish->complete(rc);
       }
     }
-    finish(0);
   }
 
   void finish(int r) {
@@ -92,6 +118,63 @@ struct NBDStream<I>::ReadRequest {
     if (r < 0) {
       data->clear();
     }
+
+    on_finish->complete(r);
+    delete this;
+  }
+};
+
+template <typename I>
+struct NBDStream<I>::ListRequest {
+  NBDStream*  nbd_stream;
+  io::Extents byte_extents;
+  io::SparseExtents* sparse_extents;
+  Context* on_finish;
+
+  ListRequest(NBDStream* nbd_stream, io::Extents&& byte_extents,
+              io::SparseExtents* sparse_extents, Context* on_finish)
+    : nbd_stream(nbd_stream), byte_extents(std::move(byte_extents)),
+      sparse_extents(sparse_extents), on_finish(on_finish) {
+    auto cct = nbd_stream->m_cct;
+    ldout(cct, 20) << dendl;
+  }
+
+  void send_list() {
+    list();
+  }
+
+  void list() {
+    auto cct = nbd_stream->m_cct;  
+    struct nbd_handle *nbd = nbd_stream->nbd;
+
+    ldout(cct, 20) << dendl;
+    for (auto& [byte_offset, byte_length] : byte_extents) {
+      auto rc = nbd_aio_block_status(nbd, byte_length, byte_offset,
+        (nbd_extent_callback) { .callback=check_extent,
+                                .user_data=sparse_extents },
+        (nbd_completion_callback) { .callback=task_completed,
+                                    .user_data=on_finish }, 0);
+      if (rc == -1) {
+        rc = nbd_get_errno();
+        lderr(cct) << "nbd_aio_block_status: " << nbd_get_error()
+                   << " (errno=" << rc << ")" <<  dendl;
+        on_finish->complete(rc);
+        return;
+      }
+    }
+    while (nbd_aio_in_flight(nbd) > 0) {
+      if (nbd_poll(nbd, -1) == -1) {
+        auto rc = nbd_get_errno();
+        lderr(cct) << "nbd_poll: " << nbd_get_error()
+                   << " (errno=" << rc << ")" <<  dendl;
+        on_finish->complete(rc);
+      }
+    }
+  }
+
+  void finish(int r) {
+    auto cct = nbd_stream->m_cct;
+    ldout(cct, 20) << "r=" << r << dendl;
 
     on_finish->complete(r);
     delete this;
@@ -111,9 +194,9 @@ NBDStream<I>::~NBDStream() {
 
 template <typename I>
 void NBDStream<I>::open(Context* on_finish) {
-  auto& url_value = m_json_object[URL_KEY];
-  if (url_value.type() != json_spirit::str_type) {
-    lderr(m_cct) << "failed to locate '" << URL_KEY << "' key" << dendl;
+  auto& server_value = m_json_object[SERVER_KEY];
+  if (server_value.type() != json_spirit::str_type) {
+    lderr(m_cct) << "failed to locate '" << SERVER_KEY << "' key" << dendl;
     on_finish->complete(-EINVAL);
     return;
   }
@@ -125,7 +208,7 @@ void NBDStream<I>::open(Context* on_finish) {
     return;
   }
 
-  const char *m_url = &(url_value.get_str())[0];
+  const char *m_server = &(server_value.get_str())[0];
   const char *m_port = &(port_value.get_str())[0];
 
   nbd = nbd_create();
@@ -139,14 +222,15 @@ void NBDStream<I>::open(Context* on_finish) {
     on_finish->complete(-EINVAL);
     return;
   }
-  if (nbd_connect_tcp(nbd, m_url, m_port) == -1) {
-    lderr(m_cct) << "failed to connect to nbd server: " << nbd_get_error() 
-                 << " (errno=" << nbd_get_errno() << ")" << dendl;
-    on_finish->complete(-EINVAL);
+  if (nbd_connect_tcp(nbd, m_server, m_port) == -1) {
+    auto rc = nbd_get_errno();
+    lderr(m_cct) << "failed to connect to nbd server: " << nbd_get_error()
+                 << " (errno=" << rc << ")" << dendl;
+    on_finish->complete(rc);
     return;
   }
 
-  ldout(m_cct, 20) << "url=" << m_url << ", "
+  ldout(m_cct, 20) << "server=" << m_server << ", "
                    << "port=" << m_port << dendl;
 
   on_finish->complete(0);
@@ -171,62 +255,21 @@ void NBDStream<I>::get_size(uint64_t* size, Context* on_finish) {
 }
 
 template <typename I>
-void NBDStream<I>::read(io::Extents&& byte_extents, bufferlist* data,
+void NBDStream<I>::read(io::Extents&& byte_extents,
+                        bufferlist* data,
                         Context* on_finish) {
   ldout(m_cct, 20) << byte_extents << dendl;
   auto ctx = new ReadRequest(this, std::move(byte_extents), data, on_finish);
-
-  // execute IO operations in a single strand to prevent races
-  boost::asio::post(m_strand, [ctx]() { ctx->send(); });
-}
-
-int check_extent(void *data, 
-                 const char *metacontext,
-                 uint64_t offset,
-                 uint32_t *entries, size_t nr_entries, int *error) {
-  io::SparseExtents* sparse_extents = (io::SparseExtents*)data;
-  uint64_t length = 0;
-  for (size_t i=0; i<nr_entries; i+=2) {
-    length += entries[i];
-  }
-  auto state = io::SPARSE_EXTENT_STATE_DATA;
-  if (nr_entries == 2) {
-    if (entries[1] & (LIBNBD_STATE_HOLE | LIBNBD_STATE_ZERO)) {
-      state = io::SPARSE_EXTENT_STATE_ZEROED;
-    }
-  }
-  sparse_extents->insert(offset, length, {state, length});
-  return (0);
+  boost::asio::post(m_strand, [ctx]() { ctx->send_read(); });
 }
 
 template <typename I>
 void NBDStream<I>::list_raw_snap(io::Extents&& image_extents,
                                  io::SparseExtents* sparse_extents, 
                                  Context* on_finish) {
-  ldout(m_cct, 20) << dendl;
-  for (auto& [byte_offset, byte_length] : image_extents) {
-    auto rc = nbd_aio_block_status(nbd, byte_length, byte_offset,
-      (nbd_extent_callback) { .callback=check_extent, .user_data=sparse_extents },
-      NBD_NULL_COMPLETION, 0); 
-    if (rc == -1) {
-      lderr(m_cct) << "nbd_aio_block_status: " << nbd_get_error()
-                   << " (errno=" << nbd_get_errno() << ")" <<  dendl;
-      on_finish->complete(-EINVAL);
-      return;
-    }
-  }
-
-  while (nbd_aio_in_flight(nbd) > 0) {
-    if (nbd_poll (nbd, -1) == -1) {
-      fprintf (stderr, "%s\n", nbd_get_error ());
-      lderr(m_cct) << "nbd_aio_in_flight: " << nbd_get_error()
-                   << " (errno=" << nbd_get_errno() << ")" <<  dendl;
-      on_finish->complete(-EINVAL);
-      return;
-    }
-  }
- 
-  on_finish->complete(0);
+  ldout(m_cct, 20) << image_extents << dendl;
+  auto ctx = new ListRequest(this, std::move(image_extents), sparse_extents, on_finish);
+  boost::asio::post(m_strand, [ctx]() { ctx->send_list(); });
 }
 
 } // namespace migration

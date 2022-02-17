@@ -12,7 +12,7 @@
 #include "librbd/migration/RawFormat.h"
 #include "librbd/migration/RawSnapshot.h"
 
-#if defined(HAVE_LIBCRYPTSETUP)
+#if defined(HAVE_LIBNBD)
 #include "librbd/migration/NBDStream.h"
 #endif
 
@@ -136,8 +136,8 @@ int SourceSpecBuilder<I>::build_stream(
     stream->reset(HttpStream<I>::create(m_image_ctx, stream_obj));
   } else if (type == "s3") {
     stream->reset(S3Stream<I>::create(m_image_ctx, stream_obj));
+#if defined(HAVE_LIBNBD)
   } else if (type == "nbd") {
-#if defined(HAVE_LIBCRYPTSETUP)
     stream->reset(NBDStream<I>::create(m_image_ctx, stream_obj));
 #endif
   } else {

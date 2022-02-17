@@ -54,6 +54,7 @@ private:
   json_spirit::mObject m_json_object;
   boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
   struct ReadRequest;
+  struct ListRequest;
 };
 
 } // namespace migration
